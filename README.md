@@ -8,7 +8,7 @@
 Thanks for visiting my GitHub account!
 
 ## Overview
-This document provides a comprehensive guide for setting up a MERN (MongoDB, Express, React, Node.js) stack application on a DigitalOcean VPS with Apache as the web server. The application is hosted under the subdomain `clientoperation.2ndsource.xyz`.
+This document provides a comprehensive guide for setting up a MERN (MongoDB, Express, React, Node.js) stack application with Apache SSL configuration, including automatic HTTPS redirection, reverse proxy for API calls, and PM2 process management on a DigitalOcean VPS with Apache as the web server. The application is hosted under the subdomain `clientoperation.2ndsource.xyz`.
 
 
 ## DigitalOcean VPS Configuration for clientoperation.2ndsource.xyz
@@ -17,14 +17,18 @@ This document provides a comprehensive guide for setting up a MERN (MongoDB, Exp
 ## Table of Contents
 1. [Overview](#overview)
 2. [DNS Configuration](#dns-configuration)
-3. [Apache Virtual Host Setup](#apache-virtual-host-setup)
-4. [SSL Configuration](#ssl-configuration)
-5. [MERN Stack Deployment](#mern-stack-deployment)
-6. [MongoDB Setup and Configuration](#mongodb-setup-and-configuration)
-7. [Maintenance and Troubleshooting](#maintenance-and-troubleshooting)
-8. [Security Best Practices](#security-best-practices)
-
-
+3. [MongoDB Setup](#-mongodb-setup)
+4. [Apache SSL Configuration](#step-1-apache-ssl-configuration)
+5. [Module Configuration](#)
+6. [Directory Setup](#-directory-structure)
+7. [Node.js Environment Setup](#environment-variables)
+8. [Frontend Deployment](#maintenance-and-troubleshooting)
+9. [Backend Deployment](#security-best-practices)
+10. [Process Management](#security-best-practices)
+11. [Service Management](#security-best-practices)
+12. [Testing & Verification](#)
+13. [Maintenance & Updates](#)
+14. [Troubleshootings](#)
 
 
 **System Configuration:**
@@ -43,314 +47,756 @@ Ensure the subdomain points to your VPS IP address by creating an A record:
 |------|------|-------|-----|
 | A | clientoperation | [YOUR_VPS_IP_ADDRESS] | 3600 |
 
-## Apache Virtual Host Setup
 
-### Enable Required Apache Modules
+## 🏗️ Architecture
 
-```bash
-sudo a2enmod proxy
-sudo a2enmod proxy_http
-sudo a2enmod ssl
+```
+Internet → Apache (Port 80/443) → Static Files (/var/www/html/clientoperation)
+                                → API Proxy → Node.js Backend (Port 5000)
 ```
 
-### Create Virtual Host Configuration
+## 📋 Prerequisites
 
-Create a new configuration file:
+- Ubuntu/Debian server with sudo access
+- Domain name configured (clientoperation.2ndsource.xyz)
+- SSL certificates obtained via Let's Encrypt
+- Apache2 installed
+- Basic familiarity with command line
+
+## 🍃 MongoDB Setup
+
+Before starting the deployment, ensure MongoDB is properly configured:
+
+### Install MongoDB
+
+```bash
+# Import the public key used by the package management system
+wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | sudo apt-key add -
+
+# Create a list file for MongoDB
+echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+
+# Reload local package database
+sudo apt-get update
+
+# Install MongoDB packages
+sudo apt-get install -y mongodb-org
+```
+
+### Configure MongoDB
+
+```bash
+# Start MongoDB
+sudo systemctl start mongod
+
+# Enable MongoDB to start on boot
+sudo systemctl enable mongod
+
+# Check MongoDB status
+sudo systemctl status mongod
+```
+
+### Create Database User
+
+```bash
+# Connect to MongoDB
+mongo
+
+# Switch to admin database
+use admin
+
+# Create admin user
+db.createUser({
+  user: "adminUser",
+  pwd: "YourDBPassword",
+  roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
+})
+
+# Create application database
+use ClientOperation
+
+# Create application user (optional)
+db.createUser({
+  user: "appUser",
+  pwd: "YourAppPassword",
+  roles: [ { role: "readWrite", db: "ClientOperation" } ]
+})
+
+# Exit MongoDB shell
+exit
+```
+
+## 🚀 Quick Start
+
+### Step 1: Apache SSL Configuration
+
+Create Apache Virtual Host Configuration:
+
+**File Path:** `/etc/apache2/sites-available/clientoperation.2ndsource.xyz.conf`
 
 ```bash
 sudo nano /etc/apache2/sites-available/clientoperation.2ndsource.xyz.conf
 ```
 
-Add the following content:
+**Configuration Content:**
 
 ```apache
+# HTTP to HTTPS Redirect
 <VirtualHost *:80>
     ServerName clientoperation.2ndsource.xyz
-    ServerAdmin webmaster@localhost
-    DocumentRoot /var/www/clientoperation.2ndsource.xyz/html
+    Redirect permanent / https://clientoperation.2ndsource.xyz/
+   RewriteEngine on
+   RewriteCond %{SERVER_NAME} =clientoperation.2ndsource.xyz
+   RewriteRule ^ https://%{SERVER_NAME}%{REQUEST_URI} [END,NE,R=permanent]
+   
+</VirtualHost>
 
-    # Log files
+# HTTPS Virtual Host
+<VirtualHost *:443>
+    ServerName clientoperation.2ndsource.xyz
+    ServerAdmin webmaster@localhost
+    
+    # SSL Configuration
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/clientoperation.2ndsource.xyz/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/clientoperation.2ndsource.xyz/privkey.pem
+    Include /etc/letsencrypt/options-ssl-apache.conf
+    
+    # Log Configuration
     ErrorLog ${APACHE_LOG_DIR}/clientoperation.2ndsource.xyz-error.log
     CustomLog ${APACHE_LOG_DIR}/clientoperation.2ndsource.xyz-access.log combined
-
-    # Proxy for React frontend (running on port 3000)
-    ProxyPass / http://localhost:3000/
-    ProxyPassReverse / http://localhost:3000/
-
-    # If you want to serve API requests to your backend
-    <Location /api>
-        ProxyPass http://localhost:5000/api
-        ProxyPassReverse http://localhost:5000/api
-    </Location>
+    
+    # Document Root for React Build
+    DocumentRoot /var/www/html/clientoperation
+    
+    # Static File Serving
+    <Directory "/var/www/html/clientoperation">
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+        
+        # React Router SPA Configuration
+        RewriteEngine On
+        RewriteBase /
+        RewriteRule ^index\.html$ - [L]
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule . /index.html [L]
+    </Directory>
+    
+    # MIME Type Configuration
+    <Files "*.js">
+        Header set Content-Type "application/javascript"
+    </Files>
+    
+    <Files "*.css">
+        Header set Content-Type "text/css"
+    </Files>
+    
+    # API Reverse Proxy
+    ProxyPass /api/ http://localhost:5000/api/
+    ProxyPassReverse /api/ http://localhost:5000/api/
 </VirtualHost>
 ```
 
-### Create Document Root Directory
+### Step 2: Enable Required Apache Modules
 
 ```bash
-sudo mkdir -p /var/www/clientoperation.2ndsource.xyz/html
-sudo chown -R $USER:$USER /var/www/clientoperation.2ndsource.xyz/html
+# Enable URL rewriting for SPA
+sudo a2enmod rewrite
+
+# Enable HTTP headers modification
+sudo a2enmod headers
+
+# Enable SSL support
+sudo a2enmod ssl
+
+# Enable reverse proxy functionality
+sudo a2enmod proxy
+sudo a2enmod proxy_http
 ```
 
-### Enable the Site
-
-```bash
-sudo a2ensite clientoperation.2ndsource.xyz.conf
-sudo systemctl restart apache2
+**Expected Output:**
+```
+Enabling module rewrite.
+Enabling module headers.
+Enabling module ssl.
+Enabling module proxy.
+Enabling module proxy_http.
+To activate the new configuration, you need to run:
+  systemctl reload apache2
 ```
 
-## SSL Configuration
-
-### Install Certbot and Obtain SSL Certificate
+### Step 3: Directory Setup
 
 ```bash
-sudo apt update
-sudo apt install certbot python3-certbot-apache
-sudo certbot --apache -d clientoperation.2ndsource.xyz
+# Create main web directory
+sudo mkdir -p /var/www/html/clientoperation
+
+# Set proper ownership for Apache
+sudo chown -R www-data:www-data /var/www/html/clientoperation
+
+# Set appropriate permissions
+sudo chmod -R 755 /var/www/html/clientoperation
 ```
 
-This will automatically update your Apache configuration to handle SSL.
-
-### SSL Auto-renewal
-
-Certbot installs a timer and service to automatically renew certificates before they expire. You can check the status with:
-
-```bash
-sudo systemctl status certbot.timer
+**Directory Structure:**
+```
+/var/www/html/clientoperation/
+├── index.html
+├── static/
+│   ├── css/
+│   ├── js/
+│   └── media/
+├── manifest.json
+└── favicon.ico
 ```
 
-## MERN Stack Deployment
-
-### Backend (Node.js) Deployment
-
-1. Create directory for the backend application:
+### Step 4: Node.js Environment Setup
 
 ```bash
-mkdir -p ~/apps/clientoperation/backend
+# Install Node.js 18.x
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Verify installation
+node --version
+npm --version
+
+# Install PM2 globally for process management
+sudo npm install -g pm2
 ```
 
-2. Deploy your Node.js code to this directory.
+**Expected Output:**
+```bash
+$ node --version
+v18.17.0
+$ npm --version
+9.6.7
+$ pm2 --version
+5.3.0
+```
 
-3. Install dependencies:
+## 🎨 Frontend Deployment (In tsstech User)
+
+### Step 5: Configure and Build React Frontend (I have filebrowser)
+
+**Base Path:** `/home/tsstech/nodeapp/clientoperation/frontend`
 
 ```bash
-cd ~/apps/clientoperation/backend
+# Navigate to frontend directory
+cd /home/tsstech/nodeapp/clientoperation/frontend
+
+# Create production environment configuration
+cat > .env.production << EOF
+REACT_APP_API_URL=https://clientoperation.2ndsource.xyz
+REACT_APP_ENV=production
+GENERATE_SOURCEMAP=false
+EOF
+
+# Install dependencies
 npm install
-```
 
-4. Set up PM2 for process management:
-
-```bash
-# Install PM2 if not already installed
-npm install -g pm2
-
-# Start your backend with PM2
-pm2 start server.js --name "clientoperation-backend"
-pm2 save
-```
-
-5. Configure your backend to listen on port 5000:
-
-```javascript
-// In your Node.js application
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-```
-
-### Frontend (React) Deployment
-
-1. Create directory for the frontend application:
-
-```bash
-mkdir -p ~/apps/clientoperation/frontend
-```
-
-2. Deploy your React code to this directory.
-
-3. Install dependencies and build for production:
-
-```bash
-cd ~/apps/clientoperation/frontend
-npm install
+# Create production build
 npm run build
 ```
 
-4. Serve the built application with PM2:
+**Build Output Example:**
+```
+Creating an optimized production build...
+Compiled successfully.
 
-```bash
-npm install -g serve
-pm2 start serve --name "clientoperation-frontend" -- -s build -l 3000
-pm2 save
+File sizes after gzip:
+  46.61 KB  build/static/js/2.8e5b5f6d.chunk.js
+  1.4 KB    build/static/js/main.2f4b5c8a.chunk.js
+  1.17 KB   build/static/js/runtime-main.e8e9c4f6.js
+  312 B     build/static/css/main.a617e044.chunk.css
+
+The build folder is ready to be deployed.
 ```
 
-### Configure PM2 to Start on Boot
+### Deploy Built Files
 
 ```bash
+# Copy build files to web directory
+sudo cp -r build/* /var/www/html/clientoperation/
+
+# Set proper ownership
+sudo chown -R www-data:www-data /var/www/html/clientoperation/
+
+# Verify deployment
+ls -la /var/www/html/clientoperation/
+```
+
+## ⚙️ Backend Deployment (In tsstech User)
+
+### Step 6: Configure Node.js Backend (I have filebrowser)
+
+**Base Path:** `/home/tsstech/nodeapp/clientoperation/backend`
+
+```bash
+# Navigate to backend directory
+cd /home/tsstech/nodeapp/clientoperation/backend
+
+# Create production environment file
+cat > .env << EOF
+PORT=5000
+NODE_ENV=production
+FRONTEND_URL=https://clientoperation.2ndsource.xyz
+#Add your database and other configurations:
+#MONGO_URI=mongodb://localhost:27017/clientoperation
+MONGO_URI=mongodb://adminUser:YourDBPassword@localhost:27017/ClientOperation?authSource=admin
+JWT_SECRET=your-super-secret-jwt-key
+EOF
+
+# Install production dependencies
+npm install --production
+```
+
+### Backend Configuration Files
+
+#### server.js: (For testing) Please remove app.use('*');
+
+```javascript
+import express from 'express';
+import connectDB from './config/db.js';
+import cors from 'cors';
+import dotenv from 'dotenv';
+
+dotenv.config();
+const app = express();
+
+connectDB();
+
+// Allowed origins for CORS
+const allowedOrigins = [
+    'https://clientoperation.2ndsource.xyz', // Production domain
+    'http://localhost:3000',                  // React dev server
+    'http://localhost:3001'                   // Alternate dev port
+];
+
+// Configure CORS middleware
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.log('CORS blocked origin:', origin);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
+}));
+
+// Health check route
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'OK',
+        message: 'Backend server is running',
+        timestamp: new Date().toISOString(),
+    });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Error:', err.message);
+    res.status(500).json({
+        error: 'Internal Server Error',
+        message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong',
+    });
+});
+
+// Start server
+const PORT = process.env.PORT || 5001;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log('Allowed Origins:', allowedOrigins);
+});
+```
+
+#### db.js:
+
+```javascript
+// config/db.js
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const connectDB = async () => {
+    try {
+        const conn = await mongoose.connect(process.env.MONGO_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+        });
+        console.log(`MongoDB Connected: ${conn.connection.host}`);
+    } catch (error) {
+        console.error(`MongoDB connection failed: ${error.message}`);
+        process.exit(1);
+    }
+};
+
+export default connectDB;
+```
+
+## 🔧 Process Management
+
+### Step 7: Configure PM2 Process Manager
+
+Create PM2 Ecosystem File:
+
+```bash
+# Create PM2 configuration
+cat > ecosystem.config.cjs << EOF
+module.exports = {
+  apps: [{
+    name: 'clientoperation-backend',
+    script: './server.js',
+    instances: 1,
+    exec_mode: 'fork',  //For mongoDB atlas use 'cluster' 
+    env: {
+      NODE_ENV: 'production',
+      PORT: 5001,
+    },
+    env_production: {
+      NODE_ENV: 'production',
+      MONGO_URI: process.env.MONGO_URI,  // Uses .env file
+      JWT_SECRET: process.env.JWT_SECRET,
+    },
+    error_file: './logs/err.log',
+    out_file: './logs/out.log',
+    log_file: './logs/combined.log',
+    time: true
+  }]
+};
+EOF
+```
+
+### Testing Backend
+
+```bash
+# Create logs directory
+mkdir -p logs
+
+# Testing purpose
+cd /home/tsstech/nodeapp/clientoperation/backend
+node server.js
+```
+
+If shown a message like `MongoDB connected:` then everything is okay.
+
+```bash
+curl http://localhost:5000/api/health
+```
+
+Finally stop server then run below:
+
+```bash
+# Start application with PM2
+pm2 start ecosystem.config.js
+
+# Save PM2 configuration
+pm2 save
+
+# Setup PM2 to start on system boot
 pm2 startup
 ```
 
-Follow the instructions it provides to set up the startup script.
+**PM2 Status Output:**
+```
+┌─────┬──────────────────────────┬─────────────┬──────┬────────┬──────────┬────────┬──────┬───────────┬──────────┬──────────┬──────────┬──────────┐
+│ id  │ name                     │ namespace   │ ver  │ mode   │ pid      │ uptime │ ↺    │ status    │ cpu      │ mem      │ user     │ watching │
+├─────┼──────────────────────────┼─────────────┼──────┼────────┼──────────┼────────┼──────┼───────────┼──────────┼──────────┼──────────┼──────────┤
+│ 0   │ clientoperation-backend  │ default     │ 1.0  │ cluster│ 12345    │ 5m     │ 0    │ online    │ 0%       │ 45.2mb   │ tsstech  │ disabled │
+└─────┴──────────────────────────┴─────────────┴──────┴────────┴──────────┴────────┴──────┴───────────┴──────────┴──────────┴──────────┴──────────┘
+```
 
-## MongoDB Setup and Configuration
+## 🌐 Service Management
 
-### Install MongoDB
+### Step 8: Enable and Start Apache
 
 ```bash
-# Import MongoDB public GPG key
-wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | sudo apt-key add -
+# Enable the site
+sudo a2ensite clientoperation.2ndsource.xyz.conf
 
-# Create a list file for MongoDB
-echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+# Test Apache configuration
+sudo apache2ctl configtest
 
-# Update package list
-sudo apt update
+# Restart Apache to apply changes
+sudo systemctl restart apache2
 
-# Install MongoDB
-sudo apt install -y mongodb-org
-
-# Start MongoDB service
-sudo systemctl start mongod
-
-# Enable MongoDB to start on boot
-sudo systemctl enable mongod
+# Enable Apache to start on boot
+sudo systemctl enable apache2
 ```
 
-### Configure MongoDB Security
+**Configuration Test Output:**
+```
+Syntax OK
+```
 
-1. Create an admin user:
+## ✅ Testing & Verification
+
+### Step 9: Verify Deployment
+
+#### Test Backend Health:
 
 ```bash
-# Connect to MongoDB
-mongosh
+# Test backend directly
+curl http://localhost:5000/api/health
 
-# Switch to admin database
-use admin
-
-# Create an admin user
-db.createUser({
-  user: "adminUser",
-  pwd: "SecurePassword123",  # Replace with a strong password
-  roles: [ { role: "userAdminAnyDatabase", db: "admin" } ]
-})
-
-# Exit MongoDB shell
-exit
+# Expected response
+{"status":"OK","timestamp":"2024-01-15T10:30:00.000Z"}
 ```
 
-2. Enable authentication:
+#### Test Frontend Access:
 
 ```bash
-sudo nano /etc/mongod.conf
+# Test HTTPS redirect
+curl -I http://clientoperation.2ndsource.xyz
+
+# Expected response
+HTTP/1.1 301 Moved Permanently
+Location: https://clientoperation.2ndsource.xyz/
+
+# Test HTTPS access
+curl -I https://clientoperation.2ndsource.xyz
+
+# Expected response
+HTTP/1.1 200 OK
+Content-Type: text/html
 ```
 
-Add/modify the security section:
-
-```yaml
-security:
-  authorization: enabled
-```
-
-3. Restart MongoDB:
+#### Service Status Checks:
 
 ```bash
-sudo systemctl restart mongod
+# Check Apache status
+sudo systemctl status apache2
+
+# Check PM2 status
+pm2 status
+
+# Check application logs
+pm2 logs clientoperation-backend --lines 50
 ```
 
-### Create Application Database and User
+## 🔄 Maintenance & Updates
+
+### Frontend Updates
 
 ```bash
-# Connect to MongoDB with authentication
-mongosh --authenticationDatabase "admin" -u "adminUser" -p "SecurePassword123"
+# Navigate to frontend directory
+cd /home/tsstech/nodeapp/clientoperation/frontend
 
-# Create and switch to your application database
-use clientoperationdb
+# Pull latest changes (if using Git)
+git pull origin main
 
-# Create a specific user for your application database
-db.createUser({
-  user: "appuser",
-  pwd: "AnotherStrongPassword",  # Replace with a strong password
-  roles: [{ role: "readWrite", db: "clientoperationdb" }]
-})
+# Install new dependencies (if any)
+npm install
 
-# Exit MongoDB shell
-exit
+# Create new build
+npm run build
+
+# Deploy updated build
+sudo cp -r build/* /var/www/html/clientoperation/
+sudo chown -R www-data:www-data /var/www/html/clientoperation/
+
+# Clear browser cache or add cache-busting
+sudo systemctl reload apache2
 ```
 
-### Configure Node.js to Connect to MongoDB
-
-Update your MongoDB connection string in your backend application:
-
-```javascript
-// In your Node.js app's config or .env file
-MONGODB_URI="mongodb://appuser:AnotherStrongPassword@localhost:27017/clientoperationdb"
-
-// In your connection code
-const mongoose = require('mongoose');
-const mongoURI = process.env.MONGODB_URI || "mongodb://appuser:AnotherStrongPassword@localhost:27017/clientoperationdb";
-
-mongoose.connect(mongoURI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('MongoDB connected'))
-.catch(err => console.error('MongoDB connection error:', err));
-```
-
-### Set Up MongoDB Backups
-
-1. Create a backup directory:
+### Backend Updates
 
 ```bash
-mkdir -p ~/mongodb-backups
+# Navigate to backend directory
+cd /home/tsstech/nodeapp/clientoperation/backend
+
+# Pull latest changes
+git pull origin main
+
+# Install new dependencies
+npm install --production
+
+# Restart application
+pm2 restart clientoperation-backend
+
+# Monitor restart
+pm2 logs clientoperation-backend --lines 20
 ```
 
-2. Create a backup script:
+### SSL Certificate Renewal
 
 ```bash
-nano ~/backup-mongodb.sh
+# Test certificate renewal (dry run)
+sudo certbot renew --dry-run
+
+# Renew certificates
+sudo certbot renew
+
+# Reload Apache after renewal
+sudo systemctl reload apache2
 ```
 
-Add the following content:
+## 🐛 Troubleshooting
+
+### Common Issues and Solutions
+
+#### 1. Apache Configuration Errors
+
+**Problem:** `apache2ctl configtest` fails
 
 ```bash
-#!/bin/bash
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-BACKUP_DIR=~/mongodb-backups
+# Check syntax errors
+sudo apache2ctl configtest
 
-mongodump --authenticationDatabase admin -u adminUser -p SecurePassword123 --db clientoperationdb --out $BACKUP_DIR/$TIMESTAMP
-
-# Keep only the last 7 backups
-ls -dt $BACKUP_DIR/*/ | tail -n +8 | xargs rm -rf
+# View detailed error logs
+sudo tail -f /var/log/apache2/error.log
 ```
 
-3. Make the script executable:
+**Solution:** Review configuration file for typos or missing modules.
+
+#### 2. SSL Certificate Issues
+
+**Problem:** SSL certificate not found
 
 ```bash
-chmod +x ~/backup-mongodb.sh
+# Check certificate files exist
+ls -la /etc/letsencrypt/live/clientoperation.2ndsource.xyz/
+
+# Test certificate validity
+openssl x509 -in /etc/letsencrypt/live/clientoperation.2ndsource.xyz/cert.pem -text -noout
 ```
 
-4. Set up a cron job for automated daily backups:
+#### 3. Backend Connection Issues
+
+**Problem:** API requests failing
 
 ```bash
-(crontab -l 2>/dev/null; echo "0 2 * * * ~/backup-mongodb.sh") | crontab -
+# Check if backend is running
+pm2 status
+
+# Check backend logs
+pm2 logs clientoperation-backend
+
+# Test backend directly
+curl -v http://localhost:5000/api/health
+
+# Check port binding
+netstat -tlnp | grep :5000
 ```
 
-## Maintenance and Troubleshooting
+#### 4. Frontend Not Loading
+
+**Problem:** React app shows blank page
+
+```bash
+# Check if files exist
+ls -la /var/www/html/clientoperation/
+
+# Check Apache error logs
+sudo tail -f /var/log/apache2/clientoperation.2ndsource.xyz-error.log
+
+# Check browser console for JavaScript errors
+# Verify MIME types are set correctly
+```
 
 ### Log Locations
 
-- **Apache Logs:**
-  - `/var/log/apache2/clientoperation.2ndsource.xyz-access.log`
-  - `/var/log/apache2/clientoperation.2ndsource.xyz-error.log`
+```bash
+# Apache Logs
+/var/log/apache2/clientoperation.2ndsource.xyz-error.log
+/var/log/apache2/clientoperation.2ndsource.xyz-access.log
 
-- **MongoDB Logs:**
-  - `/var/log/mongodb/mongod.log`
+# PM2 Logs
+/home/tsstech/nodeapp/clientoperation/backend/logs/err.log
+/home/tsstech/nodeapp/clientoperation/backend/logs/out.log
+/home/tsstech/nodeapp/clientoperation/backend/logs/combined.log
 
-- **PM2 Logs:**
-  - `pm2 logs clientoperation-frontend`
-  - `pm2 logs clientoperation-backend`
+# System Logs
+/var/log/syslog
+/var/log/apache2/error.log
+```
+
+## 📊 Performance Monitoring
+
+```bash
+# Monitor system resources
+htop
+
+# Monitor Apache processes
+ps aux | grep apache
+
+# Monitor Node.js process
+pm2 monit
+
+# Check disk usage
+df -h
+du -sh /var/www/html/clientoperation/
+```
+
+## 🔒 Security Considerations
+
+### Firewall Configuration:
+
+```bash
+# Allow HTTP and HTTPS
+sudo ufw allow 80
+sudo ufw allow 443
+
+# Block direct access to Node.js port
+sudo ufw deny 5000
+```
+
+### File Permissions:
+
+```bash
+# Ensure proper ownership
+sudo chown -R www-data:www-data /var/www/html/clientoperation/
+sudo chmod -R 755 /var/www/html/clientoperation/
+```
+
+### Environment Variables:
+
+- Never commit `.env` files to version control
+- Use strong, unique secrets for JWT and database connections
+- Regularly rotate API keys and passwords
+
+## 🔧 Quick Reference Commands
+
+```bash
+# Restart all services
+sudo systemctl restart apache2
+pm2 restart all
+
+# View all logs
+sudo tail -f /var/log/apache2/*error.log
+pm2 logs
+
+# Update and deploy
+cd /path/to/frontend && npm run build && sudo cp -r build/* /var/www/html/clientoperation/
+cd /path/to/backend && pm2 restart clientoperation-backend
+
+# Check service status
+sudo systemctl status apache2
+pm2 status
+curl -I https://clientoperation.2ndsource.xyz
+```
+
+## 📁 Directory Structure
+
+```
+/var/www/html/clientoperation/
+├── index.html
+├── static/
+│   ├── css/
+│   ├── js/
+│   └── media/
+├── manifest.json
+└── favicon.ico
+```
+
 
 ### Common Commands
 
@@ -432,9 +878,15 @@ sudo apt upgrade
 
 ---
 
-*This documentation was generated on May 15, 2025. Some commands or configurations may need updates based on newer software versions.*
+*This documentation was generated on May 28, 2025. Some commands or configurations may need updates based on newer software versions.*
 
+## 🤝 Contributing
 
+This documentation provides a complete reference for deploying and maintaining a React/Node.js application with Apache SSL configuration. Keep this guide updated as your infrastructure evolves.
+
+## 📝 License
+
+This deployment guide is provided as-is for educational and operational purposes.
 
 ## Follow Me
 
