@@ -915,6 +915,115 @@ sudo apt upgrade
 
 *This documentation was generated on May 28, 2025. Some commands or configurations may need updates based on newer software versions.*
 
+
+
+###  **Document: PM2 Setup for Frontend App (clientoperation-frontend)**
+
+---
+
+#### Step 1: Navigate to the Frontend Directory
+
+```bash
+cd ~/nodeapp/clientoperation/frontend
+```
+
+---
+
+#### Step 2: Start the Frontend with PM2
+
+##### Option A: If you're using `npm run start`
+
+```bash
+pm2 start npm --name clientoperation-frontend -- run start
+```
+
+**Expected Output:**
+
+```
+[PM2] Starting /usr/bin/npm in fork_mode (1 instance)
+[PM2] Done.
+┌─────┬───────────────────────────┬────────┬──────┬─────┬────────┬────────┐
+│ id  │ name                      │ mode   │ ↺    │ status │ cpu  │ memory │
+├─────┼───────────────────────────┼────────┼──────┼────────┼──────┼────────┤
+│ 1   │ clientoperation-frontend │ fork   │ 0    │ online │ 0%   │ 80.0mb │
+└─────┴───────────────────────────┴────────┴──────┴────────┴──────┴────────┘
+```
+
+
+---
+
+#### Step 3: Save the PM2 Process List
+
+```bash
+pm2 save
+```
+
+**Expected Output:**
+
+```
+[PM2] Saving current process list...
+[PM2] Successfully saved in /home/deploy/.pm2/dump.pm2
+```
+
+---
+
+#### Step 4: Enable PM2 on System Boot
+
+```bash
+pm2 startup systemd
+```
+
+Then, run the command it suggests. Example:
+
+```bash
+sudo env PATH=$PATH:/home/deploy/.nvm/versions/node/v18.16.0/bin pm2 startup systemd -u deploy --hp /home/deploy
+```
+
+**Expected Output:**
+
+```
+[PM2] Init system already enabled
+[PM2] To setup the startup script, copy/paste the following:
+sudo env PATH=... pm2 startup systemd -u deploy --hp /home/deploy
+```
+
+---
+
+#### Step 5: Restart the Frontend App Any Time
+
+```bash
+pm2 restart clientoperation-frontend
+```
+
+**Expected Output:**
+
+```
+[PM2] Applying action restartProcessId on app [clientoperation-frontend](id:1)
+  ✓
+[PM2] Process successfully restarted
+```
+
+---
+
+####  Step 6: Check PM2 Status
+
+```bash
+pm2 status
+```
+
+**Expected Output:**
+
+```
+┌─────┬───────────────────────────┬────────┬──────┬────────┬──────┬────────┐
+│ id  │ name                      │ mode   │ ↺    │ status │ cpu  │ memory │
+├─────┼───────────────────────────┼────────┼──────┼────────┼──────┼────────┤
+│ 0   │ clientoperation-backend  │ fork   │ 0    │ online │ 0%   │ 102mb  │
+│ 1   │ clientoperation-frontend │ fork   │ 0    │ online │ 0%   │ 80mb   │
+└─────┴───────────────────────────┴────────┴──────┴────────┴──────┴────────┘
+```
+
+---
+
 ## 🤝 Contributing
 
 This documentation provides a complete reference for deploying and maintaining a React/Node.js application with Apache SSL configuration. Keep this guide updated as your infrastructure evolves.
